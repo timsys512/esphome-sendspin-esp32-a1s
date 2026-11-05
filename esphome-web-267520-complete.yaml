@@ -1,0 +1,275 @@
+esphome:
+  name: esphome-web-267520
+  friendly_name: ESP Media Player
+  on_boot:
+    priority: -100
+    then:
+      - select.set:
+          id: dac_output_select
+          option: "BOTH"
+      - select.set:
+          id: adc_input_select
+          option: "LINE1"
+
+esp32:
+  board: esp-wrover-kit
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret ble_relay_enc
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+  ap:
+    ssid: "Esp32-A1S Hotspot"
+    password: !secret wifi_password
+
+captive_portal:
+
+psram:
+
+external_components:
+  - source: github://PxPert/a2dp_sink@master
+    components: [a2dp_sink]
+  - source:
+      type: local
+      path: components
+    components: [line_in]
+
+# Bluetooth Classic A2DP receiver. This source and Sendspin share the
+# speaker_source pipeline below.
+a2dp_sink:
+  id: a2dp_hub
+  name: "ESP32-A1S Bluetooth"
+  auto_reconnect: true
+  minimal_bluetooth: true
+
+sendspin:
+  id: sendspin_hub
+  task_stack_in_psram: true
+
+i2c:
+  sda: GPIO33
+  scl: GPIO32
+  frequency: 100kHz
+  id: bus_a
+
+audio_dac:
+  - platform: es8388
+    id: es8388_dac
+    i2c_id: bus_a
+
+select:
+  - platform: es8388
+    es8388_id: es8388_dac
+    dac_output:
+      id: dac_output_select
+      name: "DAC Output"
+    adc_input_mic:
+      id: adc_input_select
+      name: "ADC Input"
+
+# ESP32-A1S / ES8388 shared I2S bus.
+i2s_audio:
+  id: i2s_bus
+  i2s_lrclk_pin: GPIO25
+  i2s_bclk_pin: GPIO27
+  i2s_mclk_pin: GPIO0
+
+speaker:
+  - platform: i2s_audio
+    i2s_audio_id: i2s_bus
+    id: i2s_speaker_output
+    i2s_dout_pin: GPIO26
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    dac_type: external
+    channel: stereo
+    timeout: never
+    buffer_duration: 100ms
+    audio_dac: es8388_dac
+
+# LINE1 is exposed by the ES8388 ADC here. ESPHome exposes the ADC as a
+# microphone/Input object, not as a MediaSource. Selecting LINE1 therefore
+# enables the physical Line 1 input for capture/use by microphone consumers.
+microphone:
+  - platform: i2s_audio
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: GPIO35
+    id: line1_input
+    adc_type: external
+    pdm: false
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: stereo
+
+media_source:
+  - platform: sendspin
+    id: sendspin_source
+    sample_rate: 48000
+    decode_memory: internal
+
+  - platform: a2dp_sink
+    id: bluetooth_source
+    a2dp_sink_id: a2dp_hub
+
+  - platform: line_in
+    id: line1_source
+    microphone: line1_input
+    sample_rate: 48000
+    channels: 2
+    buffer_size: 65536
+
+media_player:
+  - platform: speaker_source
+    id: esp_media_player
+    name: "ESP32-A1S Media Player"
+    media_pipeline:
+      format: WAV
+      num_channels: 2
+      sample_rate: 48000
+      speaker: i2s_speaker_output
+      sources:
+        - sendspin_source
+        - bluetooth_source
+        - line1_source
+
+switch:
+  - platform: gpio
+    pin: GPIO21
+    id: mute_switch
+    name: "AMP Switch"
+    restore_mode: ALWAYS_ON
+
+  - platform: a2dp_sink
+    type: connection
+    a2dp_sink_id: a2dp_hub
+    id: bluetooth_connection
+    name: "Bluetooth Connection"
+    restore_mode: ALWAYS_OFF
+
+  - platform: a2dp_sink
+    type: bluetooth
+    a2dp_sink_id: a2dp_hub
+    id: bluetooth_state
+    name: "Bluetooth"
+    restore_mode: RESTORE_DEFAULT_ON
+
+number:
+  - platform: a2dp_sink
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth Volume"
+
+sensor:
+  - platform: sendspin
+    type: track_duration
+    id: sendspin_track_duration
+
+  - platform: a2dp_sink
+    type: rssi
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth RSSI"
+
+  - platform: a2dp_sink
+    type: samplereate
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth Sample Rate"
+
+text_sensor:
+  - platform: a2dp_sink
+    type: peername
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth Device"
+
+  - platform: a2dp_sink
+    type: title
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth Title"
+
+  - platform: a2dp_sink
+    type: artist
+    a2dp_sink_id: a2dp_hub
+    name: "Bluetooth Artist"
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO39
+      inverted: true
+      mode:
+        input: true
+    name: "Jack Status"
+
+  - platform: gpio
+    pin:
+      number: GPIO36
+      inverted: true
+    name: "Key 1"
+    filters:
+      - delayed_off: 10ms
+
+  - platform: gpio
+    pin:
+      number: GPIO13
+      inverted: true
+    name: "Key 2"
+    filters:
+      - delayed_off: 10ms
+
+  - platform: gpio
+    pin:
+      number: GPIO19
+      inverted: true
+    name: "Key 3"
+    filters:
+      - delayed_off: 10ms
+
+  - platform: gpio
+    pin:
+      number: GPIO23
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Key 4"
+    filters:
+      - delayed_off: 10ms
+
+  - platform: gpio
+    pin:
+      number: GPIO18
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Key 5"
+    filters:
+      - delayed_off: 10ms
+
+  - platform: gpio
+    pin:
+      number: GPIO5
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    name: "Key 6"
+    filters:
+      - delayed_off: 10ms
+
+light:
+  - platform: status_led
+    name: "Red LED"
+    pin:
+      number: GPIO22
+      inverted: true
